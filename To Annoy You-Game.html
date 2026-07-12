@@ -1,0 +1,1026 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>To Annoy You-Game</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #1a1a2e;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        #gameContainer {
+            position: relative;
+            width: 1000px;
+            height: 600px;
+            background: #14152b;
+            border: 3px solid #0f3460;
+            box-shadow: 0 0 20px rgba(0, 255, 150, 0.3);
+        }
+        
+        canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #mobileControls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: none;
+            gap: 15px;
+            z-index: 100;
+            background: rgba(0, 0, 0, 0.8);
+            padding: 15px;
+            border-radius: 10px;
+        }
+        
+        .btn {
+            width: 60px;
+            height: 60px;
+            background: #e94560;
+            border: 2px solid #ff6b9d;
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            border-radius: 8px;
+            cursor: pointer;
+            user-select: none;
+            touch-action: manipulation;
+        }
+        
+        .btn:active {
+            background: #ff6b9d;
+            transform: scale(0.95);
+        }
+        
+        @media (max-width: 1024px) {
+            #gameContainer {
+                width: 90vw;
+                height: 54vw;
+                max-width: 100%;
+            }
+            
+            #mobileControls {
+                display: flex;
+            }
+        }
+        
+        @media (max-width: 600px) {
+            #gameContainer {
+                width: 100vw;
+                height: 60vw;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <canvas id="gameCanvas"></canvas>
+    </div>
+    
+    <div id="mobileControls">
+        <button class="btn" id="leftBtn">←</button>
+        <button class="btn" id="jumpBtn">↑</button>
+        <button class="btn" id="rightBtn">→</button>
+    </div>
+
+    <script>
+        // Canvas setup
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = 1000;
+        canvas.height = 600;
+        
+        // Constants
+        const SCREEN_WIDTH = 1000;
+        const SCREEN_HEIGHT = 600;
+        const GRAVITY = 0.6;
+        const PLAYER_SPEED = 5;
+        const JUMP_POWER = 15;
+        const FPS = 60;
+        
+        // Colors
+        const COLOR_BG = '#14152b';
+        const COLOR_PLAYER = '#00c864';
+        const COLOR_PLATFORM = '#646496';
+        const COLOR_EXIT = '#ffd700';
+        const COLOR_EXIT_GLOW = '#ffff64';
+        const COLOR_HAZARD = '#ff3232';
+        const COLOR_DANGER = '#ff6400';
+        const COLOR_TEXT = '#ffffff';
+        const COLOR_SUCCESS = '#00ff99';
+        
+        // Input management
+        const keys = {};
+        const touchKeys = {};
+        
+        // Keyboard input
+        window.addEventListener('keydown', (e) => {
+            keys[e.key.toLowerCase()] = true;
+        });
+        window.addEventListener('keyup', (e) => {
+            keys[e.key.toLowerCase()] = false;
+        });
+        
+        // Mobile touch controls
+        const leftBtn = document.getElementById('leftBtn');
+        const rightBtn = document.getElementById('rightBtn');
+        const jumpBtn = document.getElementById('jumpBtn');
+        
+        leftBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchKeys['left'] = true;
+        });
+        leftBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchKeys['left'] = false;
+        });
+        
+        rightBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchKeys['right'] = true;
+        });
+        rightBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchKeys['right'] = false;
+        });
+        
+        jumpBtn.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            touchKeys['jump'] = true;
+        });
+        jumpBtn.addEventListener('touchend', (e) => {
+            e.preventDefault();
+            touchKeys['jump'] = false;
+        });
+        
+        function getKeys() {
+            return {
+                left: keys['arrowleft'] || keys['a'] || touchKeys['left'],
+                right: keys['arrowright'] || keys['d'] || touchKeys['right'],
+                jump: keys[' '] || keys['w'] || touchKeys['jump'],
+                reset: keys['r'],
+                escape: keys['escape']
+            };
+        }
+        
+        // Sound Manager using Web Audio API
+        class SoundManager {
+            constructor() {
+                try {
+                    this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    this.enabled = true;
+                } catch (e) {
+                    console.log('Web Audio API not supported');
+                    this.enabled = false;
+                }
+            }
+            
+            playSound(frequency, duration, type = 'sine', volume = 0.3) {
+                if (!this.enabled || !this.audioContext) return;
+                
+                const now = this.audioContext.currentTime;
+                const osc = this.audioContext.createOscillator();
+                const gain = this.audioContext.createGain();
+                
+                osc.connect(gain);
+                gain.connect(this.audioContext.destination);
+                
+                osc.type = type;
+                osc.frequency.setValueAtTime(frequency, now);
+                gain.gain.setValueAtTime(volume, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + duration);
+                
+                osc.start(now);
+                osc.stop(now + duration);
+            }
+            
+            playJump() {
+                // Quick beep - ascending
+                this.playSound(400, 0.1, 'sine', 0.3);
+                const ctx = this.audioContext;
+                setTimeout(() => this.playSound(600, 0.1, 'sine', 0.2), 50);
+            }
+            
+            playHazardTrigger() {
+                // Buzzer - warning sound
+                this.playSound(200, 0.2, 'square', 0.25);
+                this.playSound(150, 0.1, 'square', 0.2);
+            }
+            
+            playTeleport() {
+                // Whoosh sound - frequency sweep
+                const now = this.audioContext.currentTime;
+                const osc = this.audioContext.createOscillator();
+                const gain = this.audioContext.createGain();
+                
+                osc.connect(gain);
+                gain.connect(this.audioContext.destination);
+                
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(800, now);
+                osc.frequency.exponentialRampToValueAtTime(200, now + 0.3);
+                
+                gain.gain.setValueAtTime(0.3, now);
+                gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+                
+                osc.start(now);
+                osc.stop(now + 0.3);
+            }
+            
+            playDeath() {
+                // Error sound - descending
+                this.playSound(400, 0.15, 'sine', 0.3);
+                const ctx = this.audioContext;
+                setTimeout(() => this.playSound(200, 0.2, 'sine', 0.25), 100);
+            }
+            
+            playVictory() {
+                // Success chime
+                this.playSound(523, 0.15, 'sine', 0.3); // C
+                const ctx = this.audioContext;
+                setTimeout(() => this.playSound(659, 0.15, 'sine', 0.3), 150); // E
+                setTimeout(() => this.playSound(784, 0.3, 'sine', 0.3), 300); // G
+            }
+            
+            playGameComplete() {
+                // Victory fanfare
+                this.playSound(523, 0.2, 'sine', 0.3); // C
+                const ctx = this.audioContext;
+                setTimeout(() => this.playSound(659, 0.2, 'sine', 0.3), 200); // E
+                setTimeout(() => this.playSound(784, 0.2, 'sine', 0.3), 400); // G
+                setTimeout(() => this.playSound(1047, 0.4, 'sine', 0.3), 600); // C high
+            }
+        }
+        
+        const soundManager = new SoundManager();
+        
+        // Player class
+        class Player {
+            constructor(x, y) {
+                this.size = 30;
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.isJumping = false;
+                this.isGrounded = false;
+                this.spawnX = x;
+                this.spawnY = y;
+                this.jumpPower = JUMP_POWER;
+            }
+            
+            handleInput(inputKeys) {
+                this.vx = 0;
+                if (inputKeys.left) this.vx = -PLAYER_SPEED;
+                if (inputKeys.right) this.vx = PLAYER_SPEED;
+                
+                if (inputKeys.jump && this.isGrounded) {
+                    this.vy = -this.jumpPower;
+                    this.isJumping = true;
+                    this.isGrounded = false;
+                    soundManager.playJump();
+                }
+            }
+            
+            update(platforms, hazards) {
+                this.vy += GRAVITY;
+                if (this.vy > 20) this.vy = 20;
+                
+                this.x += this.vx;
+                this.y += this.vy;
+                
+                this.isGrounded = false;
+                
+                for (let platform of platforms) {
+                    if (this.collides(platform)) {
+                        if (this.vy > 0 && this.y + this.size <= platform.y + platform.height / 2) {
+                            this.y = platform.y - this.size;
+                            this.vy = 0;
+                            this.isGrounded = true;
+                            this.isJumping = false;
+                        } else if (this.vy < 0) {
+                            this.y = platform.y + platform.height;
+                            this.vy = 0;
+                        }
+                    }
+                }
+                
+                if (this.x < 0) this.x = 0;
+                if (this.x + this.size > SCREEN_WIDTH) this.x = SCREEN_WIDTH - this.size;
+                
+                if (this.y > SCREEN_HEIGHT) return false;
+                
+                for (let hazard of hazards) {
+                    if (this.collidesRect(hazard.x, hazard.y, hazard.width, hazard.height)) {
+                        return false;
+                    }
+                }
+                
+                return true;
+            }
+            
+            collides(platform) {
+                return !(this.x + this.size < platform.x || 
+                         this.x > platform.x + platform.width ||
+                         this.y + this.size < platform.y || 
+                         this.y > platform.y + platform.height);
+            }
+            
+            collidesRect(x, y, w, h) {
+                return !(this.x + this.size < x || this.x > x + w ||
+                         this.y + this.size < y || this.y > y + h);
+            }
+            
+            reset() {
+                this.x = this.spawnX;
+                this.y = this.spawnY;
+                this.vx = 0;
+                this.vy = 0;
+                this.isJumping = false;
+                this.isGrounded = false;
+            }
+            
+            draw() {
+                ctx.fillStyle = COLOR_PLAYER;
+                ctx.fillRect(this.x, this.y, this.size, this.size);
+                ctx.strokeStyle = COLOR_PLAYER;
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.size, this.size);
+            }
+        }
+        
+        // Platform class
+        class Platform {
+            constructor(x, y, width, height) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+            }
+            
+            draw() {
+                ctx.fillStyle = COLOR_PLATFORM;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                ctx.strokeStyle = '#9696c8';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+        }
+        
+        // Boulder class
+        class Boulder {
+            constructor(x, y) {
+                this.width = 40;
+                this.height = 40;
+                this.x = x;
+                this.y = y;
+                this.vx = 0;
+                this.vy = 0;
+                this.active = false;
+                this.hidden = false;
+                this.hideTimer = 0;
+                this.spawnX = x;
+                this.spawnY = y;
+            }
+            
+            trigger(playerX) {
+                this.active = true;
+                this.vx = playerX > this.x ? 3 : -3;
+                this.vy = 0.5;
+            }
+            
+            update() {
+                if (this.hidden) {
+                    this.hideTimer--;
+                    if (this.hideTimer <= 0) {
+                        this.hidden = false;
+                        this.x = this.spawnX;
+                        this.y = this.spawnY;
+                        this.vx = 0;
+                        this.vy = 0;
+                        this.active = false;
+                    }
+                    return;
+                }
+                
+                if (this.active) {
+                    this.vy += GRAVITY * 0.8;
+                    if (this.vy > 15) this.vy = 15;
+                    
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    
+                    if (this.y > SCREEN_HEIGHT) {
+                        this.hidden = true;
+                        this.hideTimer = 60;
+                    }
+                    
+                    if (this.x < 0 || this.x + this.width > SCREEN_WIDTH) {
+                        this.vx *= -1;
+                    }
+                }
+            }
+            
+            draw() {
+                if (!this.hidden) {
+                    ctx.fillStyle = COLOR_HAZARD;
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    ctx.strokeStyle = COLOR_DANGER;
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(this.x, this.y, this.width, this.height);
+                }
+            }
+        }
+        
+        // Asteroid class
+        class Asteroid {
+            constructor(x, y, direction) {
+                this.width = 35;
+                this.height = 35;
+                this.x = x;
+                this.y = y;
+                this.vx = 2 * direction;
+                this.vy = 8;
+                this.active = false;
+                this.hidden = false;
+                this.hideTimer = 0;
+                this.spawnX = x;
+                this.spawnY = y;
+            }
+            
+            trigger() {
+                this.active = true;
+            }
+            
+            update() {
+                if (this.hidden) {
+                    this.hideTimer--;
+                    if (this.hideTimer <= 0) {
+                        this.hidden = false;
+                        this.x = this.spawnX;
+                        this.y = this.spawnY;
+                        this.vy = 8;
+                        this.active = false;
+                    }
+                    return;
+                }
+                
+                if (this.active) {
+                    this.x += this.vx;
+                    this.y += this.vy;
+                    
+                    if (this.y > SCREEN_HEIGHT) {
+                        this.hidden = true;
+                        this.hideTimer = 90;
+                    }
+                }
+            }
+            
+            draw() {
+                if (!this.hidden) {
+                    ctx.fillStyle = COLOR_HAZARD;
+                    ctx.fillRect(this.x, this.y, this.width, this.height);
+                    ctx.fillStyle = COLOR_DANGER;
+                    ctx.beginPath();
+                    ctx.arc(this.x + this.width/2, this.y + this.height/2, this.width/2 - 2, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+        }
+        
+        // Earthquake class
+        class Earthquake {
+            constructor(platformObj) {
+                this.platform = platformObj;
+                this.originalX = platformObj.x;
+                this.originalY = platformObj.y;
+                this.isShaking = false;
+                this.shakeTimer = 0;
+                this.triggerDelay = 0;
+            }
+            
+            trigger() {
+                this.triggerDelay = 40;
+            }
+            
+            update() {
+                if (this.triggerDelay > 0) {
+                    this.triggerDelay--;
+                    if (this.triggerDelay === 0) {
+                        this.isShaking = true;
+                        this.shakeTimer = 60;
+                    }
+                }
+                
+                if (this.isShaking) {
+                    this.shakeTimer--;
+                    const offset = Math.sin(this.shakeTimer * 0.3) * 8;
+                    this.platform.x = this.originalX + offset;
+                    this.platform.y = this.originalY + Math.abs(offset) * 0.5;
+                    
+                    if (this.shakeTimer <= 0) {
+                        this.isShaking = false;
+                        this.platform.x = this.originalX;
+                        this.platform.y = this.originalY;
+                    }
+                }
+            }
+            
+            draw() {
+                if (this.isShaking) {
+                    ctx.strokeStyle = COLOR_DANGER;
+                    ctx.lineWidth = 4;
+                    ctx.strokeRect(this.platform.x, this.platform.y, this.platform.width, this.platform.height);
+                }
+            }
+        }
+        
+        // Exit/Door class
+        class Exit {
+            constructor(x, y, autoTeleportCount) {
+                this.x = x;
+                this.y = y;
+                this.width = 40;
+                this.height = 60;
+                this.autoTeleportCount = autoTeleportCount;
+                this.teleportCount = 0;
+                this.maxPlayerTeleports = 5; // For World 1-3
+                this.originalX = x;
+                this.originalY = y;
+                this.glowIntensity = 0;
+                this.proximityTimer = 0;
+            }
+            
+            attemptAutoTeleport(playerX, playerY) {
+                if (this.autoTeleportCount === 0) return;
+                if (this.teleportCount >= this.autoTeleportCount) return;
+                if (this.proximityTimer > 0) return;
+                
+                const distance = Math.sqrt(Math.pow(this.x + this.width/2 - playerX, 2) + 
+                                          Math.pow(this.y + this.height/2 - playerY, 2));
+                
+                if (distance < 120 && distance > 0) {
+                    this.x = [80, 350, 700][Math.floor(Math.random() * 3)];
+                    this.y = [150, 280][Math.floor(Math.random() * 2)];
+                    this.teleportCount++;
+                    this.proximityTimer = 30;
+                    soundManager.playTeleport();
+                }
+            }
+            
+            teleportPlayer(player, platforms) {
+                this.teleportCount++;
+                const targetPlatform = platforms[Math.floor(Math.random() * (platforms.length - 1))];
+                player.x = targetPlatform.x + targetPlatform.width / 2 - player.size / 2;
+                player.y = targetPlatform.y - player.size - 5;
+                player.vx = 0;
+                player.vy = 0;
+            }
+            
+            checkCollision(playerX, playerY, playerSize) {
+                return !(playerX + playerSize < this.x || playerX > this.x + this.width ||
+                         playerY + playerSize < this.y || playerY > this.y + this.height);
+            }
+            
+            update() {
+                this.glowIntensity = (this.glowIntensity + 1) % 60;
+                if (this.proximityTimer > 0) this.proximityTimer--;
+            }
+            
+            reset() {
+                this.x = this.originalX;
+                this.y = this.originalY;
+                this.teleportCount = 0;
+                this.proximityTimer = 0;
+            }
+            
+            draw() {
+                ctx.fillStyle = COLOR_EXIT;
+                ctx.fillRect(this.x, this.y, this.width, this.height);
+                
+                const glow = 0.5 + 0.5 * Math.sin(this.glowIntensity * 0.1);
+                ctx.strokeStyle = `rgba(255, 255, 100, ${glow})`;
+                ctx.lineWidth = 3;
+                ctx.strokeRect(this.x, this.y, this.width, this.height);
+            }
+        }
+        
+        // TriggerZone class
+        class TriggerZone {
+            constructor(x, y, width, height, hazardType) {
+                this.x = x;
+                this.y = y;
+                this.width = width;
+                this.height = height;
+                this.hazardType = hazardType;
+                this.activated = false;
+            }
+            
+            checkCollision(playerX, playerY, playerSize) {
+                return !(playerX + playerSize < this.x || playerX > this.x + this.width ||
+                         playerY + playerSize < this.y || playerY > this.y + this.height);
+            }
+        }
+        
+        // Base Level class
+        class Level {
+            constructor(levelNum) {
+                this.levelNum = levelNum;
+                this.player = null;
+                this.platforms = [];
+                this.hazards = [];
+                this.earthquakes = [];
+                this.exit = null;
+                this.triggers = [];
+                this.deaths = 0;
+                this.complete = false;
+                this.setup();
+            }
+            
+            setup() {}
+            setupTriggers() {}
+            
+            checkTriggers() {
+                for (let trigger of this.triggers) {
+                    if (trigger.checkCollision(this.player.x, this.player.y, this.player.size)) {
+                        if (!trigger.activated) {
+                            trigger.activated = true;
+                            this.activateHazard(trigger.hazardType);
+                        }
+                    } else {
+                        trigger.activated = false;
+                    }
+                }
+            }
+            
+            activateHazard(type) {
+                if (type === 'boulder') {
+                    for (let h of this.hazards) {
+                        if (h instanceof Boulder && !h.active) {
+                            soundManager.playHazardTrigger();
+                            h.trigger(this.player.x);
+                            return;
+                        }
+                    }
+                } else if (type === 'earthquake') {
+                    for (let e of this.earthquakes) {
+                        if (!e.isShaking && e.triggerDelay === 0) {
+                            soundManager.playHazardTrigger();
+                            e.trigger();
+                            return;
+                        }
+                    }
+                } else if (type === 'asteroid') {
+                    for (let h of this.hazards) {
+                        if (h instanceof Asteroid && !h.active) {
+                            soundManager.playHazardTrigger();
+                            h.trigger();
+                            return;
+                        }
+                    }
+                }
+            }
+            
+            update(inputKeys) {
+                this.player.handleInput(inputKeys);
+                const alive = this.player.update(this.platforms, this.hazards);
+                
+                for (let h of this.hazards) h.update();
+                for (let e of this.earthquakes) e.update();
+                this.exit.update();
+                this.exit.attemptAutoTeleport(this.player.x + this.player.size/2, this.player.y + this.player.size/2);
+                
+                this.checkTriggers();
+                
+                if (this.exit.checkCollision(this.player.x, this.player.y, this.player.size)) {
+                    if (this.exit.autoTeleportCount === 0 || this.exit.teleportCount >= this.exit.autoTeleportCount) {
+                        this.complete = true;
+                    }
+                }
+                
+                return alive;
+            }
+            
+            reset() {
+                this.deaths++;
+                soundManager.playDeath();
+                this.player.reset();
+                
+                for (let h of this.hazards) {
+                    if (h instanceof Boulder) {
+                        h.active = false;
+                        h.hidden = false;
+                        h.x = h.spawnX;
+                        h.y = h.spawnY;
+                        h.vx = 0;
+                        h.vy = 0;
+                    } else if (h instanceof Asteroid) {
+                        h.active = false;
+                        h.hidden = false;
+                        h.x = h.spawnX;
+                        h.y = h.spawnY;
+                        h.vy = 8;
+                    }
+                }
+                
+                for (let e of this.earthquakes) {
+                    e.isShaking = false;
+                    e.triggerDelay = 0;
+                    e.platform.x = e.originalX;
+                    e.platform.y = e.originalY;
+                }
+                
+                this.exit.reset();
+                for (let t of this.triggers) t.activated = false;
+                this.setupTriggers();
+            }
+            
+            draw() {
+                for (let p of this.platforms) p.draw();
+                for (let h of this.hazards) h.draw();
+                for (let e of this.earthquakes) e.draw();
+                this.exit.draw();
+                this.player.draw();
+            }
+        }
+        
+        // World 1-1
+        class World1_1 extends Level {
+            setup() {
+                this.exit = new Exit(870, 380, 3);
+                this.player = new Player(50, 400);
+                
+                this.platforms.push(new Platform(0, 480, 150, 50));
+                this.platforms.push(new Platform(250, 400, 150, 50));
+                const eqPlatform = new Platform(480, 380, 220, 50);
+                this.platforms.push(eqPlatform);
+                this.platforms.push(new Platform(800, 430, 180, 50));
+                
+                this.earthquakes.push(new Earthquake(eqPlatform));
+                
+                this.hazards.push(new Boulder(350, -60));
+                this.hazards.push(new Asteroid(600, -80, Math.random() > 0.5 ? 1 : -1));
+                
+                this.setupTriggers();
+            }
+            
+            setupTriggers() {
+                this.triggers = [];
+                if (Math.random() > 0.5) {
+                    this.triggers.push(new TriggerZone(200, 350, 100, 150, 'boulder'));
+                } else {
+                    this.triggers.push(new TriggerZone(400, 350, 100, 150, 'boulder'));
+                }
+                this.triggers.push(new TriggerZone(650, 330, 100, 100, 'earthquake'));
+                const astX = Math.random() > 0.5 ? 150 : 600;
+                this.triggers.push(new TriggerZone(astX, 0, 100, 300, 'asteroid'));
+            }
+        }
+        
+        // World 1-2
+        class World1_2 extends Level {
+            setup() {
+                this.exit = new Exit(850, 330, 5);
+                this.player = new Player(30, 520);
+                
+                const platformData = [[0, 540, 80, 60], [150, 480, 90, 50], [320, 420, 80, 50],
+                                      [480, 460, 100, 50], [650, 380, 90, 50], [820, 450, 100, 50]];
+                for (let [x, y, w, h] of platformData) {
+                    this.platforms.push(new Platform(x, y, w, h));
+                }
+                
+                const eqPlatform = new Platform(480, 460, 100, 50);
+                this.platforms.push(eqPlatform);
+                this.earthquakes.push(new Earthquake(eqPlatform));
+                
+                this.hazards.push(new Boulder(200, -80));
+                this.hazards.push(new Boulder(550, -120));
+                this.hazards.push(new Asteroid(300, -100, 1));
+                this.hazards.push(new Asteroid(700, -80, -1));
+                
+                this.setupTriggers();
+            }
+            
+            setupTriggers() {
+                this.triggers = [];
+                this.triggers.push(new TriggerZone(100, 400, 120, 150, 'boulder'));
+                this.triggers.push(new TriggerZone(400, 350, 150, 150, 'boulder'));
+                this.triggers.push(new TriggerZone(480, 400, 100, 100, 'earthquake'));
+                const astX = [200, 500, 750][Math.floor(Math.random() * 3)];
+                this.triggers.push(new TriggerZone(astX, 0, 150, 300, 'asteroid'));
+            }
+        }
+        
+        // World 1-3
+        class World1_3 extends Level {
+            setup() {
+                this.exit = new Exit(920, 250, 0);
+                this.exit.maxPlayerTeleports = 5; // Player teleports 5 times
+                this.player = new Player(20, 540);
+                
+                const platformData = [[0, 550, 60, 50], [100, 480, 70, 50], [210, 420, 65, 50],
+                                      [330, 380, 70, 50], [460, 440, 80, 50], [600, 360, 75, 50],
+                                      [750, 400, 85, 50], [900, 320, 90, 50]];
+                for (let [x, y, w, h] of platformData) {
+                    this.platforms.push(new Platform(x, y, w, h));
+                }
+                
+                const eqPlatform1 = new Platform(330, 380, 70, 50);
+                const eqPlatform2 = new Platform(750, 400, 85, 50);
+                this.earthquakes.push(new Earthquake(eqPlatform1));
+                this.earthquakes.push(new Earthquake(eqPlatform2));
+                
+                this.hazards.push(new Boulder(150, -60));
+                this.hazards.push(new Boulder(400, -100));
+                this.hazards.push(new Boulder(650, -80));
+                this.hazards.push(new Asteroid(200, -100, 1));
+                this.hazards.push(new Asteroid(500, -80, -1));
+                this.hazards.push(new Asteroid(800, -120, 1));
+                
+                this.setupTriggers();
+            }
+            
+            setupTriggers() {
+                this.triggers = [];
+                this.triggers.push(new TriggerZone(80, 350, 100, 150, 'boulder'));
+                this.triggers.push(new TriggerZone(300, 300, 120, 150, 'boulder'));
+                this.triggers.push(new TriggerZone(600, 300, 130, 150, 'boulder'));
+                for (let x of [150, 400, 700]) {
+                    this.triggers.push(new TriggerZone(x, 0, 130, 350, 'asteroid'));
+                }
+                this.triggers.push(new TriggerZone(330, 320, 70, 80, 'earthquake'));
+                this.triggers.push(new TriggerZone(750, 340, 85, 80, 'earthquake'));
+            }
+            
+            update(inputKeys) {
+                this.player.handleInput(inputKeys);
+                const alive = this.player.update(this.platforms, this.hazards);
+                
+                for (let h of this.hazards) h.update();
+                for (let e of this.earthquakes) e.update();
+                this.exit.update();
+                
+                this.checkTriggers();
+                
+                // World 1-3: Player auto-teleports when touching door (5 times)
+                if (this.exit.checkCollision(this.player.x, this.player.y, this.player.size)) {
+                    if (this.exit.teleportCount < this.exit.maxPlayerTeleports) {
+                        soundManager.playTeleport();
+                        this.exit.teleportPlayer(this.player, this.platforms);
+                    } else {
+                        this.complete = true;
+                    }
+                }
+                
+                return alive;
+            }
+        }
+        
+        // Game Engine
+        class GameEngine {
+            constructor() {
+                this.levels = [new World1_1(), new World1_2(), new World1_3()];
+                this.currentIndex = 0;
+                this.showVictory = false;
+                this.victoryTimer = 0;
+                this.gameComplete = false;
+            }
+            
+            getCurrentLevel() {
+                return this.levels[this.currentIndex];
+            }
+            
+            update(inputKeys) {
+                if (inputKeys.reset) {
+                    this.getCurrentLevel().reset();
+                    return;
+                }
+                
+                if (this.showVictory) {
+                    this.victoryTimer--;
+                    if (this.victoryTimer <= 0) {
+                        if (this.currentIndex < this.levels.length - 1) {
+                            this.currentIndex++;
+                            this.showVictory = false;
+                        } else {
+                            this.gameComplete = true;
+                            soundManager.playGameComplete();
+                        }
+                    }
+                    return;
+                }
+                
+                const level = this.getCurrentLevel();
+                if (!level.complete) {
+                    const alive = level.update(inputKeys);
+                    if (!alive) {
+                        level.reset();
+                    }
+                } else {
+                    this.showVictory = true;
+                    this.victoryTimer = 120;
+                    soundManager.playVictory();
+                }
+            }
+            
+            draw() {
+                ctx.fillStyle = COLOR_BG;
+                ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                
+                if (!this.showVictory && !this.gameComplete) {
+                    this.getCurrentLevel().draw();
+                }
+                
+                this.drawUI();
+                
+                if (this.showVictory) this.drawVictoryScreen();
+                if (this.gameComplete) this.drawGameComplete();
+            }
+            
+            drawUI() {
+                const level = this.getCurrentLevel();
+                const levelNum = this.currentIndex + 1;
+                
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.font = 'bold 24px Arial';
+                ctx.fillText(`World 1-${levelNum}`, 15, 35);
+                
+                ctx.font = 'bold 36px Arial';
+                ctx.fillStyle = '#ff4444';
+                ctx.fillText(`Deaths: ${level.deaths}`, 15, 80);
+            }
+            
+            drawVictoryScreen() {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                
+                ctx.fillStyle = COLOR_SUCCESS;
+                ctx.font = 'bold 60px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('LEVEL COMPLETE!', SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 50);
+                
+                const level = this.getCurrentLevel();
+                ctx.font = '40px Arial';
+                ctx.fillStyle = '#ff4444';
+                ctx.fillText(`Deaths: ${level.deaths}`, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 50);
+                
+                ctx.textAlign = 'left';
+            }
+            
+            drawGameComplete() {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT);
+                
+                ctx.fillStyle = COLOR_SUCCESS;
+                ctx.font = 'bold 80px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('YOU WON!', SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 100);
+                
+                ctx.font = '40px Arial';
+                ctx.fillStyle = COLOR_TEXT;
+                ctx.fillText('All Levels Beaten!', SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 50);
+                
+                const totalDeaths = this.levels.reduce((sum, l) => sum + l.deaths, 0);
+                ctx.fillText(`Total Deaths: ${totalDeaths}`, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 + 120);
+                
+                ctx.textAlign = 'left';
+            }
+        }
+        
+        // Initialize and run
+        const engine = new GameEngine();
+        let lastTime = Date.now();
+        
+        function gameLoop() {
+            const inputKeys = getKeys();
+            engine.update(inputKeys);
+            engine.draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        gameLoop();
+        
+        // Prevent default touch behavior
+        document.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+        }, { passive: false });
+    </script>
+</body>
+</html>
